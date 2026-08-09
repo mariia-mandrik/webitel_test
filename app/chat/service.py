@@ -4,7 +4,7 @@ from langgraph.types import Command
 
 from app.chat.flow import flow_graph, extract_slot, SLOTS
 from app.chat.llm_client import llm
-from app.chat.prompts import SYSTEM_PROMPT, build_answer_prompt, NO_ANSWER_REPLY
+from app.chat.prompts import SYSTEM_PROMPT, build_context, render_prompt, NO_ANSWER_REPLY
 from app.rag.retriever import search, has_relevant_results
 
 _TROUBLESHOOT_TRIGGERS = ("не працює інтернет", "немає інтернету", "пропав інтернет")
@@ -18,22 +18,34 @@ def _looks_like_troubleshoot_request(message: str) -> bool:
     return any(trigger in lowered for trigger in _TROUBLESHOOT_TRIGGERS)
 
 
-def generate_answer(question: str) -> dict:
-    results = search(question)
+def generate_answer_text(question: str, context: str) -> str:
+    """Генерація відповіді з готового текстового контексту.
 
-    if not has_relevant_results(results):
-        return {"reply": NO_ANSWER_REPLY, "sources": [], "escalate": False}
-
-    prompt = build_answer_prompt(question, results)
+    Винесено окремо від generate_answer(), щоб те саме форматування промпту
+    використовувала й офлайн-оцінка якості (tests/evaluate_generation.py),
+    яка сама формує контекст (наприклад, з golden dataset) і не має проганяти
+    повний RAG-пайплайн заново.
+    """
+    prompt = render_prompt(question, context)
     response = llm.invoke(
         [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
     )
+    return response.content
+
+
+def generate_answer(question: str) -> dict:
+    results = search(question)
+
+    if not has_relevant_results(results):
+        return {"reply": NO_ANSWER_REPLY, "sources": [], "escalate": False}
+
+    answer = generate_answer_text(question, build_context(results))
 
     return {
-        "reply": response.content,
+        "reply": answer,
         "sources": sorted({r["source_id"] for r in results}),
         "escalate": False,
     }

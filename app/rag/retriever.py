@@ -1,4 +1,5 @@
 import logging
+import re
 
 from psycopg2.extras import Json
 
@@ -9,8 +10,6 @@ from app.rag.embeddings import embed_query, embed_documents
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 MAX_QUESTION_LENGTH = 1000
 
-# Порог отсечки "нет ответа в базе": cosine distance выше — считаем,
-# что релевантных статей нет, и не передаём их в генерацию (см. Часть A.3 задания).
 NO_ANSWER_DISTANCE_THRESHOLD = 0.25
 
 
@@ -72,6 +71,20 @@ def has_relevant_results(results: list[dict], threshold: float = NO_ANSWER_DISTA
     return bool(results) and results[0]["distance"] <= threshold
 
 
+_KB_CODE_RE = re.compile(r"KB-\d+")
+
+
+def _resolve_source_id(chunk: str, filename: str, chunk_number: int) -> str:
+    """Джерело базується на коді статті (KB-XX) із самого чанка, якщо він там є —
+    один файл може містити кілька статей бази знань (як «База знань NetLink.docx»),
+    тож ім'я файлу саме по собі не ідентифікує конкретне правило."""
+    match = _KB_CODE_RE.search(chunk)
+    if match:
+        return match.group(0)
+    base_name = filename.rsplit(".", 1)[0]
+    return f"{base_name}-{chunk_number}"
+
+
 async def index_file(request, file) -> dict:
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > MAX_FILE_SIZE:
@@ -110,6 +123,7 @@ async def index_file(request, file) -> dict:
                 document_id = cur.fetchone()[0]
 
                 for i, (chunk, vector) in enumerate(zip(texts, vectors), start=1):
+                    source_id = _resolve_source_id(chunk, file.filename, i)
                     cur.execute(
                         """
                         INSERT INTO document_chunks (
@@ -120,7 +134,7 @@ async def index_file(request, file) -> dict:
                         (
                             document_id,
                             i,
-                            f"{file.filename}-{i}",
+                            source_id,
                             file.filename,
                             chunk,
                             vector,

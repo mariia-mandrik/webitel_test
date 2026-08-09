@@ -3,8 +3,9 @@ import io
 from docx import Document as DocxDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# chunk_size/overlap подобраны под короткие KB-статьи (по параграфу-два на факт):
-# 300 симв. вкладывает 1 пункт KB целиком, overlap 100 не рвёт границу факта пополам.
+
+# chunk_size/overlap підібрані під короткі KB-статті (за параграфом-два на факт):
+# 300 симв. вкладає 1 пункт KB повністю, overlap 100 не рве межу факту навпіл.
 CHUNK_SIZE = 300
 CHUNK_OVERLAP = 100
 

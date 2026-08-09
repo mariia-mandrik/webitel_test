@@ -18,6 +18,9 @@ __pycache__/
 # Docker
 db_data/
 
+# Local knowledge base files (data lives in the DB, not the repo)
+knowledge_base/
+
 # OS
 .DS_Store
 Thumbs.db
