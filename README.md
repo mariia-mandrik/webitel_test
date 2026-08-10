@@ -9,14 +9,15 @@ AI-помічник контакт-центру інтернет-провайд�
 app/
 ├── api/
 │   ├── documents.py   # POST /documents/upload — індексація файлу в базу знань
-│   └── chat.py        # POST /chat — основний ендпоінт діалогу
+│   ├── chat.py        # POST /chat — основний ендпоінт діалогу
+│   └── search.py      # POST /search — векторний пошук по базі знань (для дебагу/оцінки)
 ├── rag/
 │   ├── chunker.py      # витяг тексту з файлу + розбиття на чанки
 │   ├── embeddings.py   # обгортка над OpenAI Embeddings
 │   └── retriever.py    # векторний пошук по document_chunks + індексація документа
 ├── chat/
 │   ├── service.py      # маршрутизація: флоу-сценарій vs вільний RAG Q&A
-│   ├── prompts.py       # системний промпт генерації (цитування, заборона вигадувати)
+│   ├── prompts.py       # системні промпти (SYSTEM_PROMPT1/2 — для A/B оцінки), шаблон генерації
 │   ├── flow.py          # LangGraph-флоу «не працює інтернет»
 │   └── llm_client.py    # спільний ChatOpenAI клієнт
 ├── db/
@@ -27,7 +28,13 @@ app/
 db/
 └── init.sql             # схема БД (documents, document_chunks), застосовується автоматично
 
+tests/
+├── golden_dataset.json      # ~16 пар питання/очікувана відповідь/джерела (Частина C)
+├── evaluate_rag.py          # retrieval-метрики: hit@3, recall@3, precision@3
+└── evaluate_generation.py   # generation-метрики: faithfulness, correctness (LLM-as-judge)
+
 docker-compose.yml        # PostgreSQL + pgvector в контейнері
+requirements.txt          # залежності Python
 ```
 
 ## Вимоги
@@ -44,9 +51,7 @@ python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # Linux/macOS
 
-pip install fastapi uvicorn[standard] psycopg2-binary pgvector \
-    langchain-openai langchain-text-splitters langgraph \
-    python-docx python-dotenv
+pip install -r requirements.txt
 ```
 
 ## Налаштування `.env`
@@ -60,6 +65,9 @@ DB_USER=postgres
 DB_PASSWORD=postgres
 DB_HOST=localhost
 DB_PORT=5432
+
+# опційно, лише для tests/evaluate_generation.py — модель-суддя (LLM-as-judge)
+JUDGE_MODEL=gpt-4o-mini
 ```
 
 ## Підготовка бази даних
@@ -151,6 +159,64 @@ LangGraph-флоу: послідовно уточнює тип проблеми,
 підтягує релевантні статті з бази знань і формує відповідь із проханням
 підтвердити, чи це допомогло. Продовжуйте діалог, надсилаючи наступні
 повідомлення з тим самим `session_id`.
+
+### Пошук (для дебагу / оцінки)
+
+```bash
+curl -X POST "http://127.0.0.1:8000/search?question=Скільки коштує тариф Гіга 1000&limit=3"
+```
+
+Повертає top-k знайдених чанків із полем `source_id` (код статті бази знань,
+напр. `KB-11`) і `distance` — саме цей ендпоінт дає змогу перевірити retrieval
+окремо від генерації відповіді.
+
+## Оцінка якості (Частина C)
+
+Golden dataset (`tests/golden_dataset.json`, 16 пар питання/відповідь/джерела)
+і два скрипти оцінки. Перед запуском переконайтесь, що база знань уже
+завантажена (розділ «Завантаження документа в базу знань») і `.env` містить
+робочий `OPENAI_API_KEY`.
+
+### Retrieval-метрики
+
+```bash
+python -m tests.evaluate_rag
+```
+
+Рахує `hit@3` (чи хоч одне очікуване джерело є серед top-3), `recall@3` (яка
+частка очікуваних джерел знайдена) і `precision@3` (яка частка top-3 —
+релевантна).
+
+### Generation-метрики (LLM-as-judge)
+
+```bash
+python -m tests.evaluate_generation
+```
+
+Прогонює golden dataset через повний RAG-пайплайн (`search` →
+`generate_answer_text` з тим самим промптом, що й у продакшн-коді) і оцінює
+кожну відповідь окремою LLM-моделлю за `faithfulness` (чи не вигадано фактів
+поза контекстом) та `correctness` (чи відповідає очікуваній відповіді) за
+шкалою 0-2. Модель судді конфігурується через `JUDGE_MODEL` (за замовчуванням
+`gpt-4o-mini`).
+
+### Порівняння версій (v1 vs v2)
+
+У `app/chat/prompts.py` є два варіанти системного промпту — `SYSTEM_PROMPT1`
+(структурований, з явними правилами й форматом цитування) і `SYSTEM_PROMPT2`
+(коротший, розмовний, з логікою уточнюючих питань і ескалації). Активна
+версія обирається рядком `SYSTEM_PROMPT = SYSTEM_PROMPT2`. Щоб відтворити
+порівняння версій: переключити цей рядок на `SYSTEM_PROMPT1`, перезапустити
+`tests/evaluate_generation.py` і звести результати обох прогонів у таблицю:
+
+| Версія | hit@3 | recall@3 | precision@3 | faithfulness | correctness | Висновок |
+|--------|-------|----------|--------------|---------------|--------------|----------|
+| v1     |       |          |              |               |              |          |
+| v2     |       |          |              |               |              |          |
+
+Retrieval-метрики не залежать від системного промпту й будуть однаковими для
+обох версій — колонки додані для повноти таблиці, як цього вимагає формат
+Частини C.
 
 ## Retrieval — підхід і обмеження
 

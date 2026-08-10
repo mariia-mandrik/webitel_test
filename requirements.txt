@@ -1,0 +1,10 @@
+fastapi>=0.115
+uvicorn[standard]>=0.34
+psycopg2-binary>=2.9
+pgvector>=0.3
+langchain-openai>=0.3
+langchain-text-splitters>=0.3
+langgraph>=0.6
+openai>=1.60
+python-docx>=1.1
+python-dotenv>=1.0
